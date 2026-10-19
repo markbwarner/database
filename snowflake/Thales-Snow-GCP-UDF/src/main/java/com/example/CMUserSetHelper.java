@@ -182,6 +182,7 @@ public class CMUserSetHelper {
 
 			while ((line = br.readLine()) != null) {
 				totalnbrofrecords++;
+				// Append the email address to the payload
 				payloadBuilder.append("\"").append(line).append("\",");
 				count++;
 
