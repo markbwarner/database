@@ -18,6 +18,9 @@ import okhttp3.Response;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.Locale;
+import java.net.URI;
 
 /* This is a Thales CRDP UDF for Snowflake.  It uses the Thales CRDP Bulk API. 
  * It is an example of how to use Thales CipherTrust REST Application Dataprotection (CRDP)
@@ -40,11 +43,46 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 
 	private static final Gson gson = new Gson();
 	private static final String BADDATATAG = new String("9999999999999999");
-	private static int BATCHLIMIT = 10000;
+	private static final int BATCHLIMIT = 10000;
 	private static final String REVEALRETURNTAG = new String("data");
 	private static final String PROTECTRETURNTAG = new String("protected_data");
 
 	public void service(HttpRequest request, HttpResponse response) throws Exception {
+		Map<String, String> options;
+		int configuredBatchSize;
+		JsonArray snowflakedata;
+		try {
+			options = requestOptions(request);
+			if (options.get("mode").equals("revealbulk")) {
+				options.put("CURRENT_USER", currentUser(request));
+			}
+			configuredBatchSize = Integer.parseInt(options.get("BATCHSIZE"));
+			JsonElement parsed = gson.fromJson(request.getReader(), JsonElement.class);
+			if (parsed == null || !parsed.isJsonObject() || !parsed.getAsJsonObject().has("data")
+					|| !parsed.getAsJsonObject().get("data").isJsonArray()) {
+				throw new IllegalArgumentException("request must contain a data array");
+			}
+			snowflakedata = parsed.getAsJsonObject().getAsJsonArray("data");
+			for (JsonElement element : snowflakedata) {
+				if (!element.isJsonArray()) throw new IllegalArgumentException("each data row must be an array");
+				JsonArray row = element.getAsJsonArray();
+				if (row.size() != 2 && row.size() != 3) throw new IllegalArgumentException("each data row needs one or two function arguments");
+				if (row.size() == 3 && !(options.get("mode").equals("revealbulk")
+						&& options.get("keymetadatalocation").equals("external"))) {
+					throw new IllegalArgumentException("the second argument is supported only for revealbulk with external metadata");
+				}
+				if (options.get("mode").equals("revealbulk") && options.get("keymetadatalocation").equals("external")) {
+					externalVersion(row, options.get("keymetadata"));
+				}
+			}
+		} catch (IllegalArgumentException | JsonParseException e) {
+			response.setStatusCode(400);
+			response.setContentType("application/json");
+			JsonObject error = new JsonObject();
+			error.addProperty("error", e.getMessage());
+			response.getWriter().write(error.toString());
+			return;
+		}
 		Map<Integer, String> snowErrorMap = new HashMap<Integer, String>();
 		String encdata = "";
 		int error_count = 0;
@@ -55,7 +93,9 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 		JsonArray rownbranddata = new JsonArray();
 
 		String keyName = "testfaas";
-		String crdpip = System.getenv("CRDPIP");
+		String crdpip = options.get("CRDPIP");
+		String crdpport = options.get("CRDPPORT");
+		logConnectionTarget(request, options);
 		String userName = System.getenv("CMUSER");
 		String password = System.getenv("CMPWD");
 
@@ -63,23 +103,23 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 		// when the user above does not have access to the key and if doing a
 		// lookup in the userset and the user does not exist. If returnciphertextforuserwithnokeyaccess = no
 		// then an error will be returned to the query, else the results set will provide ciphertext.
-		String returnciphertextforuserwithnokeyaccess = System.getenv("returnciphertextforuserwithnokeyaccess");
+		String returnciphertextforuserwithnokeyaccess = options.get("returnciphertextforuserwithnokeyaccess");
 		// yes,no
 		boolean returnciphertextbool = returnciphertextforuserwithnokeyaccess.equalsIgnoreCase("yes");
 		// usersetlookup = should a userset lookup be done on the user from Cloud DB
 		// yes,no
-		String usersetlookup = System.getenv("usersetlookup");
+		String usersetlookup = options.get("usersetlookup");
 		// usersetidincm = should be the usersetid in CM to query.
 		String usersetID = System.getenv("usersetidincm");
 		// usersetlookupip = this is the IP address to query the userset. Currently it is the userset in CM but could be
 		// a memcache or other in memory db.
 		String userSetLookupIP = System.getenv("usersetlookupip");
 		boolean usersetlookupbool = usersetlookup.equalsIgnoreCase("yes");
-		String keymetadatalocation = System.getenv("keymetadatalocation");
-		String external_version_from_ext_source = System.getenv("keymetadata");
-		String protection_profile = System.getenv("protection_profile");
-		String mode = System.getenv("mode");
-		String datatype = System.getenv("datatype");
+		String keymetadatalocation = options.get("keymetadatalocation");
+		String external_version_from_ext_source = options.get("keymetadata");
+		String protection_profile = options.get("protection_profile");
+		String mode = options.get("mode");
+		String datatype = options.get("datatype");
 
 		String inputDataKey = null;
 		String outputDataKey = null;
@@ -89,17 +129,12 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 		String jsonTagForProtectReveal = null;
 
 		boolean bad_data = false;
-		String showrevealkey = "yes";
+		String showrevealkey = options.get("showrevealinternalkey");
 
 		if (mode.equals("protectbulk")) {
 			inputDataKey = "data_array";
 			outputDataKey = "protected_data_array";
 			jsonTagForProtectReveal = PROTECTRETURNTAG;
-			if (keymetadatalocation.equalsIgnoreCase("internal")) {
-				showrevealkey = System.getenv("showrevealinternalkey");
-				if (showrevealkey == null)
-					showrevealkey = "yes";
-			}
 		} else {
 			inputDataKey = "protected_data_array";
 			outputDataKey = "data_array";
@@ -108,8 +143,7 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 
 		boolean showrevealkeybool = showrevealkey.equalsIgnoreCase("yes");
 
-		String snowflakeuser = "snowflakeuser";
-		JsonArray snowflakedata = null;
+		String snowflakeuser = options.get("CURRENT_USER");
 		String snowflakereturnstring = null;
 		Response crdp_response = null;
 		try {
@@ -125,24 +159,6 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 			 * } else { usersetlookupbool = false; }
 			 */
 
-			try {
-				JsonElement requestParsed = gson.fromJson(request.getReader(), JsonElement.class);
-				JsonObject requestJson = null;
-
-				if (requestParsed != null && requestParsed.isJsonObject()) {
-					requestJson = requestParsed.getAsJsonObject();
-				}
-
-				if (requestJson != null && requestJson.has("data")) {
-					snowflakedata = requestJson.getAsJsonArray("data");
-
-				}
-
-			} catch (JsonParseException e) {
-				System.out.println("Error parsing JSON: " + e.getMessage());
-				// logger.severe("Error parsing JSON: " + e.getMessage());
-			}
-
 			// Serialization
 
 			int numberofchunks = 0;
@@ -152,7 +168,7 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 
 			int numberOfLines = snowflakedata.size();
 			int totalRowsLeft = numberOfLines;
-			int batchsize = Integer.parseInt(System.getenv("BATCHSIZE"));
+			int batchsize = configuredBatchSize;
 
 			if (batchsize > numberOfLines)
 				batchsize = numberOfLines;
@@ -175,7 +191,7 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 
 			OkHttpClient client = new OkHttpClient().newBuilder().build();
 			MediaType mediaType = MediaType.parse("application/json");
-			String urlStr = "http://" + crdpip + ":8090/v1/" + mode;
+			String urlStr = "http://" + crdpip + ":" + crdpport + "/v1/" + mode;
 
 			while (i < numberOfLines) {
 
@@ -186,7 +202,7 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 					sensitive = checkValid(snowflakerow);
 					protection_profile = protection_profile.trim();
 					// Format the output
-					String formattedElement = String.format("\"protection_policy_name\" : \"%s\"", protection_profile);
+					String formattedElement = "\"protection_policy_name\" : " + gson.toJson(protection_profile);
 					protection_policy_buff.append(formattedElement);
 					protection_policy_buff.append(",");
 
@@ -214,7 +230,7 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 						JsonObject protectedDataObject = new JsonObject();
 						protectedDataObject.addProperty(PROTECTRETURNTAG, sensitive);
 						if (keymetadatalocation.equalsIgnoreCase("external")) {
-							protectedDataObject.addProperty("external_version", external_version_from_ext_source);
+							protectedDataObject.addProperty("external_version", externalVersion(snowflakerow, external_version_from_ext_source));
 						}
 						crdp_payload_array.add(protectedDataObject);
 
@@ -482,6 +498,133 @@ public class ThalesGCPSnowCRDPBulkFPE implements HttpFunction {
 		// System.out.println("return string " + snowflakereturnstring);
 		response.getWriter().write(snowflakereturnstring);
 
+	}
+
+	// Only these non-secret settings may be overridden. Header names are HTTP
+	// case-insensitive; environment names retain their existing case.
+	private static Map<String, String> requestOptions(HttpRequest request) {
+		Map<String, String> options = new HashMap<>();
+		String[] names = {"mode", "datatype", "protection_profile", "keymetadatalocation",
+				"showrevealinternalkey", "returnciphertextforuserwithnokeyaccess", "usersetlookup", "BATCHSIZE", "CRDPIP", "CRDPPORT", "keymetadata"};
+		for (String name : names) {
+			String value = null;
+			boolean headerPresent = false;
+			for (Map.Entry<String, List<String>> header : request.getHeaders().entrySet()) {
+				// Snowflake header names use hyphens; environment names stay intact.
+				if (header.getKey().equalsIgnoreCase("sf-custom-" + name.replace('_', '-'))
+						|| header.getKey().equalsIgnoreCase("sf-custom-" + name)) {
+					if (headerPresent || header.getValue() == null || header.getValue().size() != 1) {
+						throw new IllegalArgumentException(name + " must have exactly one header value");
+					}
+					headerPresent = true;
+					value = header.getValue().get(0);
+				}
+			}
+			if (!headerPresent) value = System.getenv(name);
+			if (name.equals("CRDPIP") || name.equals("CRDPPORT")) {
+				options.put(name + "_SOURCE", headerPresent ? "header" : value != null ? "environment" : "default");
+			}
+			if (value == null && name.equals("CRDPPORT")) value = "8090";
+			if (value == null && name.equals("showrevealinternalkey")) value = "yes";
+			if (value == null && name.equals("keymetadata")) continue;
+			if (value == null || value.trim().isEmpty()) {
+				throw new IllegalArgumentException(name + " is required as a header or environment variable");
+			}
+			value = value.trim();
+			if (!name.equals("protection_profile") && !name.equals("keymetadata")) value = value.toLowerCase(Locale.ROOT);
+			options.put(name, value);
+		}
+		validateOption(options, "mode", "protectbulk", "revealbulk");
+		validateOption(options, "datatype", "char", "charint", "nbr");
+		validateOption(options, "keymetadatalocation", "internal", "external");
+		validateOption(options, "showrevealinternalkey", "yes", "no");
+		validateOption(options, "returnciphertextforuserwithnokeyaccess", "yes", "no");
+		validateOption(options, "usersetlookup", "yes", "no");
+		try {
+			int port = Integer.parseInt(options.get("CRDPPORT"));
+			if (port < 1 || port > 65535) throw new NumberFormatException();
+			options.put("CRDPPORT", Integer.toString(port));
+		} catch (NumberFormatException e) {
+			throw new IllegalArgumentException("CRDPPORT must be an integer from 1 to 65535");
+		}
+		try {
+			URI endpoint = URI.create("http://" + options.get("CRDPIP") + ":" + options.get("CRDPPORT"));
+			if (endpoint.getHost() == null || endpoint.getRawUserInfo() != null
+					|| endpoint.getPort() != Integer.parseInt(options.get("CRDPPORT")) || !endpoint.getRawPath().isEmpty()
+					|| endpoint.getRawQuery() != null || endpoint.getRawFragment() != null) {
+				throw new IllegalArgumentException();
+			}
+		} catch (IllegalArgumentException e) {
+			throw new IllegalArgumentException("CRDPIP must be a hostname or IP address without protocol, port, path or credentials (use brackets for IPv6)");
+		}
+		try {
+			int batchSize = Integer.parseInt(options.get("BATCHSIZE"));
+			if (batchSize < 1) throw new NumberFormatException();
+			options.put("BATCHSIZE", Integer.toString(Math.min(batchSize, BATCHLIMIT)));
+		} catch (NumberFormatException e) {
+			throw new IllegalArgumentException("BATCHSIZE must be a positive integer (capped at 10000)");
+		}
+		return options;
+	}
+
+	private static String currentUser(HttpRequest request) {
+		String value = null;
+		boolean found = false;
+		for (Map.Entry<String, List<String>> header : request.getHeaders().entrySet()) {
+			if (header.getKey().equalsIgnoreCase("sf-context-current-user")) {
+				if (found || header.getValue() == null || header.getValue().size() != 1) {
+					throw new IllegalArgumentException("CURRENT_USER must have exactly one context header value");
+				}
+				found = true;
+				value = header.getValue().get(0);
+			}
+		}
+		if (value == null || value.trim().isEmpty()) {
+			throw new IllegalArgumentException("revealbulk requires CONTEXT_HEADERS = (CURRENT_USER)");
+		}
+		return value.trim().toLowerCase(Locale.ROOT);
+	}
+
+	private static String externalVersion(JsonArray row, String fallback) {
+		if (row.size() == 3) {
+			JsonElement version = row.get(2);
+			if (!version.isJsonPrimitive() || !version.getAsJsonPrimitive().isString()
+					|| version.getAsString().trim().isEmpty()) {
+				throw new IllegalArgumentException("external_version argument must be a nonblank string");
+			}
+			return version.getAsString().trim();
+		}
+		if (fallback == null) throw new IllegalArgumentException("external reveal requires an external_version argument or keymetadata header/environment value");
+		return fallback;
+	}
+
+	private static void logConnectionTarget(HttpRequest request, Map<String, String> options) {
+		JsonObject log = new JsonObject();
+		log.addProperty("message", "CRDP connection target");
+		log.addProperty("crdpHost", options.get("CRDPIP"));
+		log.addProperty("crdpPort", Integer.parseInt(options.get("CRDPPORT")));
+		log.addProperty("crdpUrl", "http://" + options.get("CRDPIP") + ":"
+				+ options.get("CRDPPORT") + "/v1/" + options.get("mode"));
+		log.addProperty("hostSource", options.get("CRDPIP_SOURCE"));
+		log.addProperty("portSource", options.get("CRDPPORT_SOURCE"));
+		log.addProperty("revision", System.getenv("K_REVISION"));
+		for (Map.Entry<String, List<String>> header : request.getHeaders().entrySet()) {
+			if (header.getKey().equalsIgnoreCase("sf-external-function-query-batch-id")
+					&& header.getValue() != null && !header.getValue().isEmpty()) {
+				log.addProperty("snowflakeBatchId", header.getValue().get(0));
+				break;
+			}
+		}
+		// Structured JSON escapes field values and does not include payloads,
+		// authentication headers, credentials, or protection policy contents.
+		System.out.println(log.toString());
+	}
+
+	private static void validateOption(Map<String, String> options, String name, String... allowed) {
+		for (String value : allowed) {
+			if (value.equals(options.get(name))) return;
+		}
+		throw new IllegalArgumentException(name + " must be one of " + String.join(", ", allowed));
 	}
 
 	public String formatReturnValue(int statusCode)

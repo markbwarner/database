@@ -4,11 +4,11 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>Thales</groupId>
-  <artifactId>Thales-Snow-GCP-UDF</artifactId>
-  <version>0.0.9-SNAPSHOT</version>
+  <artifactId>CADP-SNOW-GCP-UDF</artifactId>
+  <version>0.0.2-SNAPSHOT</version>
 	<properties>
-		<maven.compiler.source>11</maven.compiler.source>
-		<maven.compiler.target>11</maven.compiler.target>
+		<maven.compiler.source>17</maven.compiler.source>
+		<maven.compiler.target>17</maven.compiler.target>
 		<commons-lang3.version>3.12.0</commons-lang3.version>
 		<commons-collections4.version>4.4</commons-collections4.version>
 		<bouncycastle.version>1.70</bouncycastle.version>
@@ -20,12 +20,12 @@
 		<log4j-core.version>2.17.2</log4j-core.version>
 		<jar.version>.000</jar.version>
 	</properties>
-	<name>Thales-Snow-GCP-UDF</name>
+	<name>CADP-SNOW-GCP-UDF</name>
 	<dependencies>
 			<dependency>
 			<groupId>io.github.thalescpl-io.cadp</groupId>
 			<artifactId>CADP_for_JAVA</artifactId>
-			<version>8.16.0.000</version>
+			<version>8.18.0.001</version>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.commons</groupId>
@@ -112,7 +112,7 @@
 				<artifactId>function-maven-plugin</artifactId>
 				<version>0.10.1</version>
 				<configuration>
-					<functionTarget>com.example.HelloWorld</functionTarget>
+					<functionTarget>com.example.ThalesGCPSnowCRDPBulkFPE</functionTarget>
 				</configuration>
 			</plugin>
 			<plugin>

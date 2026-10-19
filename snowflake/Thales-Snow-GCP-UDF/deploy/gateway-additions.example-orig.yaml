@@ -1,0 +1,38 @@
+# MERGE these entries into the currently deployed OpenAPI 2 document.
+# This fragment is NOT a complete replacement configuration.
+# Use a security scheme key unique within your existing document.
+securityDefinitions:
+  snowflake_crdp:
+    type: oauth2
+    flow: implicit
+    authorizationUrl: ""
+    x-google-issuer: "REPLACE_WITH_API_GCP_SERVICE_ACCOUNT_FROM_DESC_INTEGRATION"
+    x-google-jwks_uri: "https://www.googleapis.com/robot/v1/metadata/x509/REPLACE_WITH_API_GCP_SERVICE_ACCOUNT_FROM_DESC_INTEGRATION"
+    x-google-audiences: "REPLACE_WITH_EXISTING_GOOGLE_AUDIENCE"
+paths:
+  /thales-gcp-crdp-protectbulk-char:
+    post:
+      operationId: snowflakeCrdpProtectBulkChar
+      security:
+        - snowflake_crdp: []
+      x-google-backend:
+        address: "https://REPLACE_WITH_CLOUD_RUN_SERVICE_HOST"
+        jwt_audience: "https://REPLACE_WITH_CLOUD_RUN_SERVICE_HOST"
+        path_translation: CONSTANT_ADDRESS
+        deadline: 120.0
+      responses:
+        '200':
+          description: Snowflake row results
+  /thales-gcp-crdp-revealbulk-char:
+    post:
+      operationId: snowflakeCrdpRevealBulkChar
+      security:
+        - snowflake_crdp: []
+      x-google-backend:
+        address: "https://REPLACE_WITH_CLOUD_RUN_SERVICE_HOST"
+        jwt_audience: "https://REPLACE_WITH_CLOUD_RUN_SERVICE_HOST"
+        path_translation: CONSTANT_ADDRESS
+        deadline: 120.0
+      responses:
+        '200':
+          description: Snowflake row results
