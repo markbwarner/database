@@ -20,7 +20,7 @@ CREATE OR REPLACE EXTERNAL FUNCTION thales_gcp_crdp_external_revealbulk_char(b V
   CONTEXT_HEADERS = (CURRENT_USER)
   MAX_BATCH_ROWS = 1000
   COMPRESSION = NONE
-  AS 'https://echo1-7g0qje36.uc.gateway.dev/thales-gcp-crdp-revealbulk-char';
+  AS 'https://your-gateway.dev/thales-gcp-crdp-revealbulk-char';
 
 SELECT CURRENT_USER();
 SELECT thales_gcp_crdp_external_revealbulk_char('sS5NSo81') AS revealed_value;
